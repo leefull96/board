@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>Secret Toys - Firebase Board</title>
+    <style>
+        /* 기존 스타일 유지 */
+        body { font-family: 'Pretendard', sans-serif; background-color: #f5f6f8; margin: 0; padding: 0; }
+        .header { background: #2c3e50; color: white; padding: 20px; text-align: center; font-size: 24px; font-weight: bold; }
+        .container { width: 900px; margin: 40px auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
+        .board-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .search-box { margin-bottom: 20px; display: flex; gap: 10px; }
+        .search-box input { padding: 8px; border: 1px solid #ddd; border-radius: 4px; flex-grow: 1; }
+        
+        .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        .write-btn { background: #3498db; color: white; }
+        .save-btn { background: #2ecc71; color: white; }
+        .delete-btn { background: #e74c3c; color: white; }
+        .back-btn { background: #95a5a6; color: white; }
+        .edit-btn { background: #f1c40f; color: white; }
+
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { padding: 12px; text-align: center; border-bottom: 1px solid #ddd; }
+        th { background: #f0f2f5; }
+        .title-link { color: #333; cursor: pointer; text-decoration: none; }
+        .title-link:hover { color: #3498db; text-decoration: underline; }
+
+        .pagination { margin-top: 30px; text-align: center; }
+        .page-btn { display: inline-block; margin: 0 5px; padding: 8px 14px; border: 1px solid #ddd; cursor: pointer; border-radius: 6px; }
+        .page-btn.active { background: #3498db; color: white; }
+
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
+        .form-group input, .form-group textarea { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        .form-group textarea { height: 200px; resize: none; }
+        #imagePreview { max-width: 100%; margin-top: 10px; border-radius: 5px; display: none; }
+        .detail-img { max-width: 100%; margin: 20px 0; display: block; }
+        
+        .view-section { display: none; }
+        .active-section { display: block; }
+        
+        /* 로딩 스피너 */
+        #loading { display: none; text-align: center; padding: 20px; font-weight: bold; color: #3498db; }
+    </style>
+</head>
+<body>
+
+<div class="header">Secret Toys</div>
+
+<div class="container">
+    <div id="loading">데이터를 불러오는 중입니다...</div>
+
+    <div id="listView" class="view-section active-section">
+        <div class="board-header">
+            <div class="board-title">자유 게시판</div>
+            <button class="btn write-btn" onclick="showWriteForm()">글쓰기</button>
+        </div>
+        
+        <div class="search-box">
+            <input type="text" id="searchInput" placeholder="제목 또는 작성자로 검색..." onkeyup="if(window.event.keyCode==13){searchPosts()}">
+            <button class="btn" onclick="searchPosts()">검색</button>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>제목</th>
+                    <th>작성자</th>
+                    <th>날짜</th>
+                </tr>
+            </thead>
+            <tbody id="postTable"></tbody>
+        </table>
+        <div class="pagination" id="pagination"></div>
+    </div>
+
+    <div id="formView" class="view-section">
+        <h2 id="formTitle">게시글 작성</h2>
+        <input type="hidden" id="editId">
+        <div class="form-group">
+            <label>제목</label>
+            <input type="text" id="postTitleInput">
+        </div>
+        <div class="form-group">
+            <label>작성자</label>
+            <input type="text" id="postAuthorInput">
+        </div>
+        <div class="form-group">
+            <label>내용</label>
+            <textarea id="postContentInput"></textarea>
+        </div>
+        <div class="form-group">
+            <label>이미지 첨부 (최대 1MB 권장)</label>
+            <input type="file" id="postImageInput" accept="image/*" onchange="previewImage(this)">
+            <img id="imagePreview">
+        </div>
+        <div style="text-align: right;">
+            <button class="btn back-btn" onclick="showList()">취소</button>
+            <button class="btn save-btn" onclick="savePost()">저장하기</button>
+        </div>
+    </div>
+
+    <div id="detailView" class="view-section">
+        <h2 id="detailTitle"></h2>
+        <div style="border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 20px; color: #666;">
+            작성자: <span id="detailAuthor"></span> | 날짜: <span id="detailDate"></span>
+        </div>
+        <div id="detailImageContainer"></div>
+        <div id="detailContent" style="line-height: 1.6; min-height: 150px;"></div>
+        
+        <div style="margin-top: 40px; border-top: 1px solid #eee; padding-top: 20px; display: flex; justify-content: space-between;">
+            <button class="btn back-btn" onclick="showList()">목록으로</button>
+            <div>
+                <button class="btn edit-btn" onclick="editPost()">수정</button>
+                <button class="btn delete-btn" onclick="deletePost()">삭제</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+    import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+
+    // ✅ 여기에 본인의 Firebase 콘솔 설정값을 붙여넣어!
+  const firebaseConfig = {
+    apiKey: "AIzaSyAh47SRumEK8TIuivz3o0cb61bWIGhcYTc",
+    authDomain: "board-e1a7d.firebaseapp.com",
+    projectId: "board-e1a7d",
+    storageBucket: "board-e1a7d.firebasestorage.app",
+    messagingSenderId: "699281685694",
+    appId: "1:699281685694:web:1b835d499fc4e44bd432ef"
+    };
+
+    // Firebase 초기화
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    let posts = [];
+    let filteredPosts = [];
+    const postsPerPage = 5;
+    let currentPage = 1;
+    let currentPostId = null;
+
+    // 모듈 내 함수들을 전역(window) 객체에 연결 (HTML onclick에서 사용하기 위해)
+    window.showList = showList;
+    window.showWriteForm = showWriteForm;
+    window.searchPosts = searchPosts;
+    window.previewImage = previewImage;
+    window.savePost = savePost;
+    window.viewPost = viewPost;
+    window.editPost = editPost;
+    window.deletePost = deletePost;
+    window.goPage = goPage;
+
+    // 데이터 가져오기 (Read)
+    async function fetchPosts() {
+        showLoading(true);
+        posts = [];
+        try {
+            // 최신 글이 위로 오도록 내림차순 정렬
+            const q = query(collection(db, "posts"), orderBy("createdAt", "desc"));
+            const querySnapshot = await getDocs(q);
+            querySnapshot.forEach((doc) => {
+                posts.push({ id: doc.id, ...doc.data() });
+            });
+            filteredPosts = [...posts];
+            renderPosts();
+        } catch (error) {
+            console.error("데이터 불러오기 에러:", error);
+            alert("게시글을 불러오는데 실패했습니다.");
+        }
+        showLoading(false);
+    }
+
+    // 데이터 저장/수정 (Create / Update)
+    async function savePost() {
+        const title = document.getElementById('postTitleInput').value;
+        const author = document.getElementById('postAuthorInput').value;
+        const content = document.getElementById('postContentInput').value;
+        const editId = document.getElementById('editId').value;
+
+        if(!title || !author || !content) {
+            alert("내용을 모두 채워주세요!");
+            return;
+        }
+
+        showLoading(true);
+        const postData = {
+            title: title,
+            author: author,
+            content: content,
+            image: selectedImageData,
+            date: new Date().toISOString().split('T')[0],
+            createdAt: new Date() // 정렬용 시간
+        };
+
+        try {
+            if (editId) {
+                // 수정
+                const postRef = doc(db, "posts", editId);
+                await updateDoc(postRef, postData);
+                alert("수정되었습니다.");
+            } else {
+                // 새 글
+                await addDoc(collection(db, "posts"), postData);
+                alert("저장되었습니다.");
+            }
+            await fetchPosts(); // 목록 새로고침
+            showList();
+        } catch (error) {
+            console.error("저장 에러:", error);
+            alert("저장에 실패했습니다.");
+        }
+        showLoading(false);
+    }
+
+    // 데이터 삭제 (Delete)
+    async function deletePost() {
+        if(confirm("정말로 삭제하시겠습니까?")) {
+            showLoading(true);
+            try {
+                await deleteDoc(doc(db, "posts", currentPostId));
+                alert("삭제되었습니다.");
+                await fetchPosts();
+                showList();
+            } catch (error) {
+                console.error("삭제 에러:", error);
+                alert("삭제에 실패했습니다.");
+            }
+            showLoading(false);
+        }
+    }
+
+    // --- 화면 및 UI 제어 함수들 ---
+    function hideAllSections() {
+        document.querySelectorAll('.view-section').forEach(s => s.classList.remove('active-section'));
+    }
+
+    function showList() {
+        hideAllSections();
+        document.getElementById('listView').classList.add('active-section');
+    }
+
+    function showWriteForm() {
+        hideAllSections();
+        document.getElementById('formView').classList.add('active-section');
+        document.getElementById('formTitle').innerText = "게시글 작성";
+        clearForm();
+    }
+
+    function showLoading(show) {
+        document.getElementById('loading').style.display = show ? 'block' : 'none';
+    }
+
+    function renderPosts() {
+        const table = document.getElementById("postTable");
+        table.innerHTML = "";
+        const start = (currentPage - 1) * postsPerPage;
+        const end = start + postsPerPage;
+        const pagePosts = filteredPosts.slice(start, end);
+
+        if(pagePosts.length === 0) {
+            table.innerHTML = "<tr><td colspan='3'>게시글이 없습니다.</td></tr>";
+        }
+
+        pagePosts.forEach(post => {
+            table.innerHTML += `
+                <tr>
+                    <td><a class="title-link" onclick="viewPost('${post.id}')">${post.title}</a></td>
+                    <td>${post.author}</td>
+                    <td>${post.date}</td>
+                </tr>
+            `;
+        });
+        renderPagination();
+    }
+
+    function renderPagination() {
+        const pageCount = Math.ceil(filteredPosts.length / postsPerPage);
+        const pagination = document.getElementById("pagination");
+        pagination.innerHTML = "";
+        for (let i = 1; i <= pageCount; i++) {
+            pagination.innerHTML += `
+                <span class="page-btn ${i === currentPage ? 'active' : ''}" onclick="goPage(${i})">${i}</span>
+            `;
+        }
+    }
+
+    function goPage(page) {
+        currentPage = page;
+        renderPosts();
+    }
+
+    function searchPosts() {
+        const keyword = document.getElementById('searchInput').value.toLowerCase();
+        filteredPosts = posts.filter(p => 
+            p.title.toLowerCase().includes(keyword) || 
+            p.author.toLowerCase().includes(keyword)
+        );
+        currentPage = 1;
+        renderPosts();
+    }
+
+    let selectedImageData = "";
+    function previewImage(input) {
+        if (input.files && input.files[0]) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                selectedImageData = e.target.result;
+                const preview = document.getElementById('imagePreview');
+                preview.src = selectedImageData;
+                preview.style.display = "block";
+            };
+            reader.readAsDataURL(input.files[0]);
+        }
+    }
+
+    function viewPost(id) {
+        const post = posts.find(p => p.id === id);
+        currentPostId = id;
+        document.getElementById("detailTitle").innerText = post.title;
+        document.getElementById("detailAuthor").innerText = post.author;
+        document.getElementById("detailDate").innerText = post.date;
+        document.getElementById("detailContent").innerText = post.content;
+        
+        const imgContainer = document.getElementById("detailImageContainer");
+        imgContainer.innerHTML = post.image ? `<img src="${post.image}" class="detail-img">` : "";
+
+        hideAllSections();
+        document.getElementById("detailView").classList.add('active-section');
+    }
+
+    function editPost() {
+        const post = posts.find(p => p.id === currentPostId);
+        showWriteForm();
+        document.getElementById('formTitle').innerText = "게시글 수정";
+        document.getElementById('editId').value = post.id;
+        document.getElementById('postTitleInput').value = post.title;
+        document.getElementById('postAuthorInput').value = post.author;
+        document.getElementById('postContentInput').value = post.content;
+        if(post.image) {
+            const preview = document.getElementById('imagePreview');
+            preview.src = post.image;
+            preview.style.display = "block";
+            selectedImageData = post.image;
+        }
+    }
+
+    function clearForm() {
+        document.getElementById('editId').value = "";
+        document.getElementById('postTitleInput').value = "";
+        document.getElementById('postAuthorInput').value = "";
+        document.getElementById('postContentInput').value = "";
+        document.getElementById('postImageInput').value = "";
+        document.getElementById('imagePreview').style.display = "none";
+        selectedImageData = "";
+    }
+
+    // 첫 실행 시 데이터 불러오기
+    fetchPosts();
+</script>
+
+</body>
+</html>
